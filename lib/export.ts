@@ -44,3 +44,12 @@ export async function buildPdfFromMarkdown(mdText: string): Promise<Buffer> {
   doc.end();
   return await new Promise((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
 }
+
+export function toMarkdown(payload: any) {
+  return buildMarkdown(payload);
+}
+
+export async function toPdf(payload: any) {
+  const md = buildMarkdown(payload);
+  return await buildPdfFromMarkdown(md);
+}
