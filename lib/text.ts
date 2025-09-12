@@ -1,66 +1,48 @@
 // lib/text.ts
-// Dependency-free text helpers: tokenize, TF-IDF cosine, sentence stats
-// console.log("[text.ts] dependency-free version loaded");
-
-const STOPWORDS = new Set([
-  "a","an","and","are","as","at","be","by","for","from","has","he","in","is",
-  "it","its","of","on","that","the","to","was","were","will","with","this",
-  "i","you","your","we","our","they","their","them","or","but","if","than",
-  "then","so","such","these","those","over","under","into","out","about",
-  "up","down","not"
-]);
-
-/** Lowercase tokenization; keeps tech-ish tokens (+, #, ., -) */
 export function tokenize(text: string): string[] {
-  const tokens = (text || "")
+  return (text || "")
     .toLowerCase()
-    .match(/[a-z0-9.+#-]+/g) || [];
-  return tokens.filter(t => t.length > 1 && !STOPWORDS.has(t));
+    .replace(/[^a-z0-9.+#-]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 }
 
-/** Build term frequency map */
-function tf(tokens: string[]): Map<string, number> {
+function termFreq(tokens: string[]): Map<string, number> {
   const m = new Map<string, number>();
   for (const t of tokens) m.set(t, (m.get(t) || 0) + 1);
   return m;
 }
 
-/** Compute TF-IDF cosine similarity (0..100) between two strings */
 export function tfidfCosine(a: string, b: string): number {
   const ta = tokenize(a);
   const tb = tokenize(b);
-  if (ta.length === 0 || tb.length === 0) return 0;
+  if (!ta.length || !tb.length) return 0;
 
-  const fa = tf(ta);
-  const fb = tf(tb);
+  const fa = termFreq(ta);
+  const fb = termFreq(tb);
 
-  // Document frequency across the two docs
-  const vocab = new Set<string>([...fa.keys(), ...fb.keys()]);
-  const N = 2;
-  const idf = new Map<string, number>();
+  const vocab = new Set([...fa.keys(), ...fb.keys()]);
+  const v1: number[] = [];
+  const v2: number[] = [];
+
   for (const term of vocab) {
-    const df = (fa.has(term) ? 1 : 0) + (fb.has(term) ? 1 : 0);
-    // smoothed IDF
-    idf.set(term, Math.log((N + 1) / (df + 1)) + 1);
+    const w1 = fa.get(term) || 0;
+    const w2 = fb.get(term) || 0;
+    v1.push(w1);
+    v2.push(w2);
   }
 
-  // Build vectors
-  let dot = 0, n1 = 0, n2 = 0;
-  for (const term of vocab) {
-    const wa = (fa.get(term) || 0) * (idf.get(term) || 0);
-    const wb = (fb.get(term) || 0) * (idf.get(term) || 0);
-    dot += wa * wb;
-    n1 += wa * wa;
-    n2 += wb * wb;
-  }
-
+  const dot = v1.reduce((s, _, i) => s + v1[i] * v2[i], 0);
+  const n1 = Math.sqrt(v1.reduce((s, x) => s + x * x, 0));
+  const n2 = Math.sqrt(v2.reduce((s, x) => s + x * x, 0));
   if (!n1 || !n2) return 0;
-  return (dot / (Math.sqrt(n1) * Math.sqrt(n2))) * 100;
+
+  return (dot / (n1 * n2)) * 100; // 0..100
 }
 
-/** Basic sentence stats for clarity metrics */
 export function sentenceStats(text: string) {
-  const sentences = (text.match(/[^.!?]+[.!?]/g) || [text]).map(s => s.trim());
+  const sentences = (text.match(/[^.!?]+[.!?]/g) || [text]).map((s) => s.trim());
   const words = (text.match(/\b\w+\b/g) || []).length;
   const avgLen = sentences.length ? words / sentences.length : 0;
   return { sentences: sentences.length, words, avgLen };

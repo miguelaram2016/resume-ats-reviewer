@@ -10,7 +10,6 @@
   "dependencies": {
     "@mozilla/readability": "^0.4.4",
     "@prisma/client": "^5.2.0",
-    "compromise": "^13.11.4",
     "jsdom": "^22.1.0",
     "mammoth": "^1.10.0",
     "markdown-it": "^13.0.1",

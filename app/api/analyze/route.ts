@@ -2,57 +2,57 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyze } from "@/lib/analyze";
 import { parseFromFile } from "@/lib/parseResume";
-import { logger, newReqId } from "@/lib/logger";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${tag} timeout after ${ms}ms`)), ms);
-    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
-  });
+function j(status: number, body: any) {
+  return NextResponse.json(body, { status });
 }
 
 export async function POST(req: NextRequest) {
-  const id = newReqId();
-  const t0 = Date.now();
-  logger.info("analyze:start", { id });
-
+  const ct = req.headers.get("content-type") || "";
   try {
-    const form = await withTimeout(req.formData(), 10_000, "formData");
-    let jd = (form.get("jd") as string) || "";
-    let resumeText = (form.get("resume_text") as string) || "";
-    const file = form.get("resume") as unknown as File | null;
+    let jd = "";
+    let resumeText = "";
+    let file: File | null = null;
 
-    logger.info("analyze:inputs", { id, hasFile: !!file, jdLen: jd.length, resumeTextLen: resumeText.length });
+    if (ct.includes("multipart/form-data")) {
+      const form = await req.formData();
+      jd = String(form.get("jd") ?? "");
+      resumeText = String(form.get("resume_text") ?? "");
+      file = (form.get("resume") as unknown as File) || null;
+    } else {
+      const text = await req.text();
+      try {
+        const json = text ? JSON.parse(text) : {};
+        jd = String(json.jd ?? "");
+        resumeText = String(json.resume_text ?? "");
+      } catch {
+        const params = new URLSearchParams(text);
+        jd = String(params.get("jd") ?? "");
+        resumeText = String(params.get("resume_text") ?? "");
+      }
+    }
 
     if (file) {
-      // TEMP: comment next 2 lines in to **bypass file parsing** while we debug
-      // logger.warn("analyze: bypassing file parse temporarily", { id, fileName: (file as any)?.name });
-      // jd ||= "general role responsibilities"; // optional helper if jd was empty
-
-      const parsed = await withTimeout(parseFromFile(file), 20_000, "parseFromFile");
-      resumeText = parsed.text || resumeText;
-      logger.info("analyze:parsed", { id, fileName: parsed.fileName, textLen: resumeText.length });
+      try {
+        const parsed = await parseFromFile(file);
+        if ((parsed.text ?? "").trim()) resumeText = parsed.text;
+      } catch (e) {
+        // swallow; still try with provided text
+        console.error("parseFromFile failed:", e);
+      }
     }
 
-    if (!resumeText && !jd) {
-      return NextResponse.json({ error: "Provide a resume (file or text)." }, { status: 400 });
-    }
-    if (!jd) {
-      // keep analysis stable if jd is blank
-      jd = "general software role responsibilities skills experience";
+    if (!jd || !resumeText) {
+      return j(400, { error: "Provide both resume and JD (text or file)." });
     }
 
-    // read PII toggle from either name; default on
-    const redactPII = String(form.get("pii") ?? form.get("redact_pii") ?? "true") === "true";
-
-    const out = analyze({ resumeText, jd, redactPII });
-    logger.info("analyze:done", { id, totalMs: Date.now() - t0, scores: out?.scores });
-
-    return NextResponse.json(out);
+    const out = analyze({ resumeText, jd });
+    return j(200, out);
   } catch (e: any) {
-    logger.error("analyze:error", { id, message: e?.message, stack: e?.stack });
-    return NextResponse.json({ error: e?.message || "Unexpected error", id }, { status: 500 });
+    console.error("[/api/analyze fatal]", e?.stack || e);
+    return j(500, { error: "Internal error in /api/analyze", detail: String(e?.message || e) });
   }
 }
