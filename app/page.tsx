@@ -17,13 +17,33 @@ export default function HomePage() {
     setResult(null);
     form.set('weights', JSON.stringify(weights));
     form.set('redact_pii', String(redactPII));
-    try {
-      const res = await fetch('/api/analyze', { method: 'POST', body: form });
-      const json = await res.json();
-      setResult(json);
-    } finally {
-      setLoading(false);
+    // app/page.tsx (inside your component)
+    async function onAnalyze(form: FormData) {
+      setLoading(true);
+      setResult(null);
+
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort("client-timeout"), 30000);
+
+      try {
+        const res = await fetch("/api/analyze", { method: "POST", body: form, signal: ctrl.signal as any });
+        const json = await res.json().catch(() => ({ error: "Bad JSON from server" }));
+        if (!res.ok) {
+          console.error("analyze: API error", { status: res.status, body: json });
+          setResult({ error: json?.error || "Server error" });
+        } else {
+          console.log("analyze: success", { scores: json?.scores });
+          setResult(json);
+        }
+      } catch (err) {
+        console.error("analyze: fetch failed", err);
+        setResult({ error: (err as Error)?.message || "Network error" });
+      } finally {
+        clearTimeout(t);
+        setLoading(false);   // <-- guarantees spinner turns off
+      }
     }
+
   }
   async function fetchJDFromUrl() {
     if (!jdUrl) return;

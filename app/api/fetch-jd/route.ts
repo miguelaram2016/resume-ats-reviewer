@@ -1,34 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { JSDOM } from 'jsdom'
-import { Readability } from '@mozilla/readability'
+import { NextRequest, NextResponse } from "next/server";
+import { newReqId, logger } from "@/lib/logger";
 
-export const runtime = 'nodejs'
+export const runtime = "nodejs";
 
-export async function POST(req: NextRequest){
-  const { url } = await req.json()
-  if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 })
-  const res = await fetch(url, { headers: { 'user-agent':'Mozilla/5.0' }})
-  const html = await res.text()
-
+export async function POST(req: NextRequest) {
+  const reqId = newReqId();
   try {
-    const dom = new JSDOM(html, { url })
-    // drop nav/footers/aside/scripts/styles first
-    dom.window.document.querySelectorAll('script,style,nav,footer,aside,form,noscript').forEach(n=>n.remove())
-    const reader = new Readability(dom.window.document)
-    const art = reader.parse()
-    if (art?.textContent?.trim()) {
-      return NextResponse.json({ text: art.textContent.trim() })
+    const { url } = await req.json();
+    if (!url) {
+      logger.warn("fetch-jd: missing url", { reqId });
+      return NextResponse.json({ error: "url required", reqId }, { status: 400 });
     }
-  } catch (e) {
-    // fall through
+    logger.info("fetch-jd: fetching", { reqId, url });
+
+    const res = await fetch(url);
+    const html = await res.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/g, " ")
+      .replace(/<style[\s\S]*?<\/style>/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    logger.info("fetch-jd: ok", { reqId, textLen: text.length });
+    return NextResponse.json({ text, reqId });
+  } catch (err: unknown) {
+    const e = err as Error;
+    logger.error("fetch-jd: failed", { reqId, message: e?.message, stack: e?.stack });
+    return NextResponse.json({ error: e?.message || "Fetch failed", reqId }, { status: 500 });
   }
-
-  const fallback = html
-    .replace(/<script[\s\S]*?<\/script>/g,' ')
-    .replace(/<style[\s\S]*?<\/style>/g,' ')
-    .replace(/<[^>]+>/g,' ')
-    .replace(/\s+/g,' ')
-    .trim()
-
-  return NextResponse.json({ text: fallback })
 }

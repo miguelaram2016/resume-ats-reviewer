@@ -1,5 +1,6 @@
 // lib/text.ts
 // Dependency-free text helpers: tokenize, TF-IDF cosine, sentence stats
+// console.log("[text.ts] dependency-free version loaded");
 
 const STOPWORDS = new Set([
   "a","an","and","are","as","at","be","by","for","from","has","he","in","is",
