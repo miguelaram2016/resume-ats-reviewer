@@ -15,36 +15,37 @@ export default function HomePage() {
   async function onAnalyze(form: FormData) {
     setLoading(true);
     setResult(null);
-    form.set('weights', JSON.stringify(weights));
-    form.set('redact_pii', String(redactPII));
-    // app/page.tsx (inside your component)
-    async function onAnalyze(form: FormData) {
-      setLoading(true);
-      setResult(null);
 
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort("client-timeout"), 30000);
+    // include config in the form
+    form.set("weights", JSON.stringify(weights));
+    form.set("redact_pii", String(redactPII));
 
-      try {
-        const res = await fetch("/api/analyze", { method: "POST", body: form, signal: ctrl.signal as any });
-        const json = await res.json().catch(() => ({ error: "Bad JSON from server" }));
-        if (!res.ok) {
-          console.error("analyze: API error", { status: res.status, body: json });
-          setResult({ error: json?.error || "Server error" });
-        } else {
-          console.log("analyze: success", { scores: json?.scores });
-          setResult(json);
-        }
-      } catch (err) {
-        console.error("analyze: fetch failed", err);
-        setResult({ error: (err as Error)?.message || "Network error" });
-      } finally {
-        clearTimeout(t);
-        setLoading(false);   // <-- guarantees spinner turns off
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort("client-timeout"), 30_000);
+
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        body: form,            // FormData: don't set Content-Type yourself
+        signal: ctrl.signal as any,
+      });
+
+      const json = await res.json().catch(() => ({ error: "Bad JSON from server" }));
+      if (!res.ok) {
+        console.error("analyze: API error", { status: res.status, body: json });
+        setResult({ error: json?.error || `HTTP ${res.status}` });
+      } else {
+        setResult(json);
       }
+    } catch (err: any) {
+      console.error("analyze: fetch failed", err);
+      setResult({ error: err?.message || "Network error" });
+    } finally {
+      clearTimeout(t);
+      setLoading(false);  // ← guarantees spinner turns off
     }
-
   }
+
   async function fetchJDFromUrl() {
     if (!jdUrl) return;
     const res = await fetch('/api/fetch-jd', { method: 'POST', body: JSON.stringify({ url: jdUrl }) });
@@ -102,7 +103,11 @@ export default function HomePage() {
             </div>
           </div>
           <div className="md:col-span-8 space-y-6">
-            <KeywordChips missing={result?.missing_keywords ?? []} matched={result?.matched_keywords ?? []} />
+            <KeywordChips
+              missing={result?.missing_keywords ?? []}
+              matched={result?.matched_keywords ?? []}
+              initialLimit={10}
+            />
             <FindingsList title="Flags" items={result?.flags ?? []} />
             <FindingsList title="Fix List" items={result?.fix_list ?? []} />
             <FindingsList title="Suggested Bullet Rewrites" items={result?.suggested_rewrites ?? []} />
