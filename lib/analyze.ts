@@ -1,115 +1,119 @@
 // lib/analyze.ts
+// Analyzer (industry-agnostic). Now optionally consumes DocHints from Paperweight.
 
-// =========== Public types ===========
 export type AnalyzeInput = {
   resumeText: string;
   jd: string;
   weights?: {
-    ats?: number;            // formatting/compliance proxy
-    keyword_match?: number;  // JD/resume overlap
-    impact?: number;         // quantified results/action
-    clarity?: number;        // readability/structure
+    ats?: number;
+    keyword_match?: number;
+    impact?: number;
+    clarity?: number;
   };
   redactPII?: boolean;
+  hints?: {
+    resume?: DocHints;
+    jd?: DocHints;
+  };
 };
 
 export type AnalyzeOutput = {
-  scores: {
-    overall: number;        // 0..100
-    ats: number;            // 0..100
-    keyword_match: number;  // 0..100
-    impact: number;         // 0..100
-    clarity: number;        // 0..100
-  };
+  scores: { overall: number; ats: number; keyword_match: number; impact: number; clarity: number; };
   matched_keywords: string[];
   missing_keywords: string[];
   flags: string[];
   fix_list: string[];
   suggested_rewrites: string[];
   tailored_summary: string;
+  // extras (optional; UI can ignore)
+  matched_total?: number;
+  missing_total?: number;
 };
 
-// =========== Analysis ===========
+export type DocHints = {
+  pages?: number;
+  info?: Record<string, any>;
+  metadata?: Record<string, any>;
+  emails: string[];
+  phones: string[];
+  links: string[];
+  headings: string[];
+  bullets: string[];
+  charCount: number;
+  method: "pdf-parse" | "utf8";
+};
 
+// ====================== MAIN ======================
 export function analyze(input: AnalyzeInput): AnalyzeOutput {
   const { redactPII = false } = input;
   const weights = withDefaultWeights(input.weights);
 
-  // Normalize both sides BEFORE tokenization; keep originals for rewrites/summary.
   const resumeN = normalize(input.resumeText);
-  const jdN = normalize(input.jd);
+  const jdN     = normalize(input.jd);
 
-  // Extract “terms” (tokens + phrases)
   const resumeTokens = tokenize(resumeN);
-  const jdTokens = tokenize(jdN);
+  const jdTokens     = tokenize(jdN);
 
   const resumeSet = toSet(resumeTokens);
-  const jdSet = toSet(jdTokens);
+  const jdSet     = toSet(jdTokens);
 
-  // Mine candidate keywords from JD (bigrams+unigrams, filtered)
   const jdKeyPhrases = extractKeyPhrases(jdTokens);
   const resKeyPhrases = extractKeyPhrases(resumeTokens);
 
-  // Match phrases first, then fall back to tokens with fuzzy credit
   const { matched, missing } = matchKeywords(jdKeyPhrases, resKeyPhrases, jdSet, resumeSet);
 
-  // Heuristic scoring buckets (industry-agnostic)
-  const atsScore = scoreATS(input.resumeText);
-  const impactScore = scoreImpact(input.resumeText);
-  const clarityScore = scoreClarity(input.resumeText);
+  // Scoring with hints
+  const atsScore     = scoreATS(input.resumeText, input.hints?.resume);
+  const impactScore  = scoreImpact(input.resumeText, input.hints?.resume);
+  const clarityScore = scoreClarity(input.resumeText, input.hints?.resume);
   const keywordScore = Math.round((matched.length / Math.max(1, matched.length + missing.length)) * 100);
 
   const overall = weighted([
-    [atsScore, weights.ats],
-    [keywordScore, weights.keyword_match],
-    [impactScore, weights.impact],
-    [clarityScore, weights.clarity],
+    [atsScore,        weights.ats],
+    [keywordScore,    weights.keyword_match],
+    [impactScore,     weights.impact],
+    [clarityScore,    weights.clarity],
   ]);
 
-  // Flags & fixes
-  const flags = buildFlags(input.resumeText);
+  const flags    = buildFlags(input.resumeText, input.hints?.resume);
   const fix_list = flags.map(f => `Fix: ${f}`);
-
-  // Suggested rewrites (transform some lines into stronger bullets)
   const suggested_rewrites = suggestRewrites(input.resumeText);
 
-  // Tailored summary aligned to JD
   const tailored_summary = buildSummary(input.resumeText, input.jd, keywordScore, matched.length);
 
-  // Redact PII AFTER analysis so it doesn’t break matching
-  const postProcess = (s: string) => (redactPII ? redact(s) : s);
+  const cap = 10; // server-side cap (UI can "Show more" if you wire it)
+  const matched_total = matched.length;
+  const missing_total = missing.length;
+
+  const post = (s: string) => (redactPII ? redact(s) : s);
+
   return {
-    scores: {
-      overall,
-      ats: atsScore,
-      keyword_match: keywordScore,
-      impact: impactScore,
-      clarity: clarityScore,
-    },
-    matched_keywords: matched.map(postProcess),
-    missing_keywords: missing.map(postProcess),
-    flags: flags.map(postProcess),
-    fix_list: fix_list.map(postProcess),
-    suggested_rewrites: suggested_rewrites.map(postProcess),
-    tailored_summary: postProcess(tailored_summary),
+    scores: { overall, ats: atsScore, keyword_match: keywordScore, impact: impactScore, clarity: clarityScore },
+    matched_keywords: matched.slice(0, cap).map(post),
+    missing_keywords: missing.slice(0, cap).map(post),
+    flags: flags.map(post),
+    fix_list: fix_list.map(post),
+    suggested_rewrites: suggested_rewrites.map(post),
+    tailored_summary: post(tailored_summary),
+    matched_total,
+    missing_total,
   };
 }
 
-// =========== Normalization & tokenization ===========
-
+// ====================== Normalization & tokens ======================
 export function normalize(raw: string): string {
   return raw
     .normalize("NFKC")
-    .replace(/[\u2010-\u2015]/g, "-")              // dashes
-    .replace(/[“”„‟]/g, '"')                       // quotes
-    .replace(/[‘’‚‛]/g, "'")                       // apostrophes
-    .replace(/\u00A0/g, " ")                       // NBSP
-    .replace(/[|•·●▪▶►]/g, " ")                    // bullets
+    .replace(/[\u2010-\u2015]/g, "-")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/\u00A0/g, " ")
+    .replace(/[|•·●▪▶►]/g, " ")
     .replace(/[()]/g, " ")
-    .replace(/[-_/\\]/g, " ")                      // separators
+    .replace(/[-_/\\]/g, " ")
     .replace(/\.(js|ts|tsx|jsx)\b/g, " $1 ")
     .toLowerCase()
-    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "") // accents
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -119,32 +123,22 @@ const STOP = new Set([
   "company","role","position","candidate","seeking","opportunity","responsibilities","requirements","skills","experience"
 ]);
 
-// Aliases across industries (extensible)
-const ALIAS: Record<string, string> = {
-  // tech
-  "nextjs": "next.js", "next": "next.js",
-  "node": "node.js", "nodejs": "node.js",
-  "typescript": "ts", "javascript": "js",
-  "tailwindcss": "tailwind", "reactjs": "react",
-  "mssql": "sql server", "ms sql": "sql server",
-  "aws s3": "s3",
-  // ops/finance/health/etc.
-  "ap/ar": "ap ar", "a/p": "ap", "a/r": "ar",
-  "ehr": "electronic health record", "hipaa": "hipaa",
-  "gaap": "gaap",
+const ALIAS: Record<string,string> = {
+  "nextjs":"next.js","next":"next.js",
+  "node":"node.js","nodejs":"node.js",
+  "typescript":"ts","javascript":"js",
+  "tailwindcss":"tailwind","reactjs":"react",
+  "mssql":"sql server","ms sql":"sql server",
+  "aws s3":"s3","ap/ar":"ap ar","a/p":"ap","a/r":"ar",
+  "ehr":"electronic health record"
 };
 
-function alias(tok: string): string {
-  return ALIAS[tok] ?? tok;
-}
+function alias(tok: string) { return ALIAS[tok] ?? tok; }
 
 export function tokenize(nrm: string): string[] {
   const words = nrm.split(" ").map(alias).filter(w => w && w.length > 1 && !STOP.has(w));
-  // generate bigrams for phrase sensitivity
   const bigrams: string[] = [];
-  for (let i = 0; i < words.length - 1; i++) {
-    bigrams.push(`${words[i]} ${words[i + 1]}`);
-  }
+  for (let i = 0; i < words.length - 1; i++) bigrams.push(`${words[i]} ${words[i+1]}`);
   return [...words, ...bigrams];
 }
 
@@ -157,26 +151,18 @@ export function toSet(tokens: string[]) {
   return s;
 }
 
-// Phrase extraction: prefer nouns/skills-ish tokens by crude filters
 function extractKeyPhrases(tokens: string[]): string[] {
   const phrases = new Set<string>();
   for (const t of tokens) {
     if (t.includes(" ")) {
-      // take bigrams that look like skills/terms
-      if (!/^(and|the|for|with|from|over|under|into|onto)\b/.test(t)) {
-        phrases.add(t);
-      }
+      if (!/^(and|the|for|with|from|over|under|into|onto)\b/.test(t)) phrases.add(t);
     } else {
-      // keep singles that look like domain terms (letters+digits allowed)
-      if (/^[a-z0-9.+#-]{2,}$/.test(t) && !STOP.has(t)) {
-        phrases.add(t);
-      }
+      if (/^[a-z0-9.+#-]{2,}$/.test(t) && !STOP.has(t)) phrases.add(t);
     }
   }
   return [...phrases];
 }
 
-// Fuzzy match helper (cheap char-level distance)
 function near(a: string, b: string): boolean {
   if (a === b) return true;
   const la = a.length, lb = b.length;
@@ -201,23 +187,16 @@ function matchKeywords(
   const missing: string[] = [];
 
   const resPhraseSet = new Set(resPhrases);
-  // 1) phrase-level exact or near matches
   for (const p of jdPhrases) {
     const base = p.replace(/(ing|ed|es|s)$/,"");
-    const found =
-      resPhraseSet.has(p) ||
-      [...resPhraseSet].some(q => near(q, p)) ||
-      resSet.has(base);
+    const found = resPhraseSet.has(p) || [...resPhraseSet].some(q => near(q, p)) || resSet.has(base);
     if (found) matched.push(p); else missing.push(p);
   }
 
-  // 2) token-level: add any tokens present in JD but not in resume
   for (const tok of jdSet) {
-    if (!resSet.has(tok)) missing.push(tok);
-    else matched.push(tok);
+    if (!resSet.has(tok)) missing.push(tok); else matched.push(tok);
   }
 
-  // Dedup & keep concise
   const uniq = (arr: string[]) => Array.from(new Set(arr)).slice(0, 200);
   return {
     matched: uniq(matched),
@@ -225,38 +204,43 @@ function matchKeywords(
   };
 }
 
-// =========== Scoring heuristics (industry-agnostic) ===========
-
-function scoreATS(resumeRaw: string): number {
-  // proxy for structure: presence of common sections + bullet usage + contact block
+// ====================== Scoring (use hints when present) ======================
+function scoreATS(resumeRaw: string, hints?: DocHints): number {
   const r = resumeRaw.toLowerCase();
   let pts = 0;
-  if (/\bsummary|objective\b/.test(r)) pts += 15;
-  if (/\beducation\b/.test(r)) pts += 15;
-  if (/\bexperience|employment|work history\b/.test(r)) pts += 20;
-  if (/\bskills\b/.test(r)) pts += 15;
-  if (/[-*•▪●]/.test(resumeRaw)) pts += 10; // bullets
-  if (/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/.test(r)) pts += 10; // email
-  if (/\b\d{3}[- .]?\d{3}[- .]?\d{4}\b/.test(r)) pts += 5; // phone
-  if (/\bgithub|linkedin|portfolio|http/.test(r)) pts += 10;
+
+  // Sections/headings — prefer hints
+  const H = (hints?.headings || []).map(h => h.toLowerCase());
+  const has = (k: string) => H.some(h => h.includes(k)) || r.includes(k);
+
+  if (has("summary") || has("objective")) pts += 15;
+  if (has("education")) pts += 15;
+  if (has("experience") || has("employment") || has("work history")) pts += 20;
+  if (has("skills")) pts += 15;
+
+  // Contact/selectable
+  if ((hints?.emails?.length || 0) > 0) pts += 10;
+  if ((hints?.phones?.length || 0) > 0) pts += 5;
+  if ((hints?.links?.length || 0) > 0 || /\bgithub|linkedin|portfolio|http/.test(r)) pts += 10;
+
+  // Bullets — prefer hints
+  const bulletCount = hints?.bullets?.length ?? (resumeRaw.match(/[-*•▪●]/g) || []).length;
+  if (bulletCount > 0) pts += Math.min(10, Math.floor(bulletCount / 5) * 2);
+
   return clamp(Math.round(pts), 0, 100);
 }
 
-function scoreImpact(resumeRaw: string): number {
-  // reward quantified bullets and action verbs
+function scoreImpact(resumeRaw: string, hints?: DocHints): number {
   const lower = resumeRaw.toLowerCase();
   const actionVerbs = ["built","led","reduced","increased","optimized","designed","developed","deployed","automated","delivered","launched","implemented","streamlined","improved","created","managed"];
   const verbHits = actionVerbs.reduce((acc,v)=>acc + (lower.includes(v) ? 1 : 0), 0);
-
-  const metricsHits = (resumeRaw.match(/\b\d+(\.\d+)?%|\b\d{2,}(?:k|m)?\b/gi) || []).length; // % or big numbers
-  const bullets = (resumeRaw.match(/[-*•▪●]/g) || []).length;
-
+  const metricsHits = (resumeRaw.match(/\b\d+(\.\d+)?%|\b\d{2,}(?:k|m)?\b/gi) || []).length;
+  const bullets = hints?.bullets?.length ?? (resumeRaw.match(/[-*•▪●]/g) || []).length;
   const raw = 30 + Math.min(40, metricsHits*6) + Math.min(20, verbHits*4) + Math.min(10, Math.floor(bullets/5)*2);
   return clamp(raw, 0, 100);
 }
 
-function scoreClarity(resumeRaw: string): number {
-  // simplistic readability proxy: sentence length & passive voice hints
+function scoreClarity(resumeRaw: string, _hints?: DocHints): number {
   const text = resumeRaw.replace(/\s+/g," ").trim();
   const sentences = text.split(/[.!?]\s/).filter(Boolean);
   const avgLen = sentences.length ? text.split(/\s+/).length / sentences.length : 18;
@@ -275,25 +259,29 @@ function weighted(pairs: Array<[number, number]>): number {
 
 function clamp(n: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, n)); }
 
-// =========== Flags, fixes, rewrites, summary ===========
-
-function buildFlags(raw: string): string[] {
+// ====================== Flags, rewrites, summary ======================
+function buildFlags(raw: string, hints?: DocHints): string[] {
   const flags: string[] = [];
   const r = raw.toLowerCase();
-  if (!/\bsummary|objective\b/.test(r)) flags.push("Add a brief Professional Summary (2–3 lines).");
-  if (!/\beducation\b/.test(r)) flags.push("Add an Education section.");
-  if (!/\bexperience|employment|work history\b/.test(r)) flags.push("Add an Experience section.");
-  if (!/\bskills\b/.test(r)) flags.push("Add a Skills section.");
-  const bullets = (raw.match(/[-*•▪●]/g) || []).length;
+  const H = (hints?.headings || []).map(h => h.toLowerCase());
+
+  const has = (k: string) => H.some(h => h.includes(k)) || r.includes(k);
+
+  if (!has("summary") && !has("objective")) flags.push("Add a brief Professional Summary (2–3 lines).");
+  if (!has("education")) flags.push("Add an Education section.");
+  if (!has("experience") && !has("employment") && !has("work history")) flags.push("Add an Experience section.");
+  if (!has("skills")) flags.push("Add a Skills section.");
+
+  const bullets = hints?.bullets?.length ?? (raw.match(/[-*•▪●]/g) || []).length;
   if (bullets < 6) flags.push("Use bullet points for readability and scannability.");
-  if (!/\b\d{3}[- .]?\d{3}[- .]?\d{4}\b/.test(r) && !/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/.test(r)) {
+  if ((hints?.emails?.length || 0) === 0 && (hints?.phones?.length || 0) === 0) {
     flags.push("Ensure contact info (email/phone) is present and selectable.");
   }
+
   return flags.slice(0, 10);
 }
 
 function suggestRewrites(raw: string): string[] {
-  // Transform some lines into metric-led, verb-first bullets
   const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const out: string[] = [];
   for (const line of lines) {
@@ -305,7 +293,6 @@ function suggestRewrites(raw: string): string[] {
 }
 
 function rewriteLine(line: string): string | null {
-  // If line lacks a metric, add a metric prompt
   const startsPassive = /\b(was|were|been|being|be)\b/i.test(line);
   const hasMetric = /\b\d+(\.\d+)?%|\b\d{2,}(?:k|m)?\b/i.test(line);
   let base = line.replace(/^[-*•▪●]\s*/, "").trim();
@@ -326,13 +313,12 @@ function restAfterFirstVerb(s: string): string {
 }
 function capitalize(s: string) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 
-function buildSummary(resumeRaw: string, jdRaw: string, kwScore: number, matchedCount: number): string {
+function buildSummary(_resumeRaw: string, _jdRaw: string, kwScore: number, matchedCount: number): string {
   const focus = kwScore >= 60 ? "strong alignment" : kwScore >= 35 ? "partial alignment" : "foundational alignment";
   return `Results-driven professional with ${focus} to the role; matched ${matchedCount} JD terms. Emphasize quantified outcomes and the most relevant tools/frameworks referenced in the job description.`;
 }
 
-// =========== PII Redaction (post-analysis) ===========
-
+// ====================== Redaction ======================
 function redact(s: string): string {
   return s
     .replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi, "[REDACTED_EMAIL]")

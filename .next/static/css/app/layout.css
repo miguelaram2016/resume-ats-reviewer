@@ -554,6 +554,9 @@ video {
     max-width: 1400px;
   }
 }
+.collapse {
+  visibility: collapse;
+}
 .mb-2 {
   margin-bottom: 0.5rem;
 }
@@ -592,9 +595,6 @@ video {
 }
 .min-w-\[280px\] {
   min-width: 280px;
-}
-.transform {
-  transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
 }
 .list-disc {
   list-style-type: disc;
