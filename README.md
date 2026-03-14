@@ -25,6 +25,18 @@ npm run dev
 # open http://localhost:3000
 ```
 
+## Icons
+
+This project uses [better-icons](https://github.com/better-auth/better-icons) for AI-powered icon search.
+
+### Using with Codex
+
+The project has an MCP config at `mcp.json` — Codex can search and add icons using natural language:
+
+- `"Search for UI icons"`
+- `"Get lucide:file-text as SVG"`
+- `"Add a download icon to my export button"`
+
 ### Re-create via bootstrap script
 ```bash
 chmod +x ./bootstrap.sh && ./bootstrap.sh <your-github-username>
