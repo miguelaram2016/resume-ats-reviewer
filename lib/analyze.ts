@@ -274,9 +274,9 @@ function buildFlags(raw: string, hints?: DocHints): string[] {
 
   const bullets = hints?.bullets?.length ?? (raw.match(/[-*•▪●]/g) || []).length;
   if (bullets < 6) flags.push("Use bullet points for readability and scannability.");
-  if ((hints?.emails?.length || 0) === 0 && (hints?.phones?.length || 0) === 0) {
-    flags.push("Ensure contact info (email/phone) is present and selectable.");
-  }
+  
+  // Contact info check disabled - always pass since raw text detection is unreliable on Vercel
+  // if (!hasEmail || !hasPhone) flags.push("Ensure contact info (email/phone) is present and selectable.");
 
   return flags.slice(0, 10);
 }

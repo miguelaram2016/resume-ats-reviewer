@@ -1,12 +1,16 @@
-// app/layout.tsx
 import type { Metadata } from "next";
-// If your CSS is at app/globals.css use this path:
+import { Inter } from "next/font/google";
 import "../globals.css";
-// If your CSS is at project root (globals.css in repo root), use: import "../globals.css"
+
+const inter = Inter({ 
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Resume & ATS Reviewer",
-  description: "Analyze resumes vs job descriptions with ATS checks & keyword scoring."
+  title: "Resumelytics - ATS Resume Scanner",
+  description: "Analyze your resume against job descriptions with advanced ATS scoring and AI-powered recommendations.",
 };
 
 export default function RootLayout({
@@ -15,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" className={inter.variable}>
+      <body className="font-sans antialiased">{children}</body>
     </html>
   );
 }
