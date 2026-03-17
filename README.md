@@ -6,7 +6,7 @@ A web‑deployable tool that analyzes resumes against job descriptions, flags AT
 - **Frontend**: Next.js 14+ (App Router, TypeScript) + Tailwind + shadcn/ui
 - **Server**: Next.js Route Handlers (Node runtime)
 - **Deploy**: Vercel
-- **Parsing**: `pdf-parse` (PDF), `mammoth` (DOCX)
+- **Parsing**: Client-side PDF.js (browser) + mammoth (DOCX server-side)
 - **NLP**: `natural` (TF‑IDF), `compromise` (POS-ish helpers)
 - **JD Cleaner**: `jsdom` + `@mozilla/readability`
 - **Export**: Markdown + PDF (PDFKit)
@@ -17,6 +17,25 @@ A web‑deployable tool that analyzes resumes against job descriptions, flags AT
 - Analysis: ATS compliance, keyword match, impact signals, clarity/style
 - Outputs: Overall/ATS/Keyword/Impact/Clarity scores, flags, missing keywords, rewrites, tailored summary, fix list
 - Extras: **PII redaction toggle**, file‑name linting, **Export to Markdown & PDF**, exposed scoring weights
+
+## PDF Parsing Architecture
+
+PDF parsing is handled **client-side** in the browser using PDF.js. This approach was chosen because:
+
+1. **Serverless compatibility**: Vercel's serverless functions cannot run PDF.js workers (they require Node.js workers)
+2. **Browser native**: Browsers support web workers natively, making PDF parsing reliable
+3. **Self-hosted worker**: The PDF.js worker (`/public/pdf.worker.min.js`) is self-hosted to avoid CDN dependencies
+
+### Why self-host the worker?
+- **Security**: Eliminates third-party CDN trust assumption
+- **Reliability**: No external dependency that could go down or change
+- **Version control**: Worker version is locked to pdfjs-dist package version
+
+The worker file must match the pdfjs-dist version. Update it when upgrading the package:
+```bash
+# Copy matching worker to public/
+cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.js
+```
 
 ## Local Setup
 ```bash
@@ -58,3 +77,4 @@ chmod +x ./bootstrap.sh && ./bootstrap.sh <your-github-username>
 2. Create a new Vercel project, import the repo
 3. Set **Node.js Runtime** for API routes
 4. Deploy
+5. Ensure `public/pdf.worker.min.js` is included (Next.js includes public/ by default)
