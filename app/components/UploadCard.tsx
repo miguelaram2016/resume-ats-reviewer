@@ -10,6 +10,7 @@ export function UploadCard({ onAnalyze, loading }: Props) {
   const [mode, setMode] = useState<'standalone' | 'full'>('full');
   const [isDragging, setIsDragging] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState('');
   
   useEffect(() => {
     const handler = (e: any) => setJd(e.detail);
@@ -45,22 +46,32 @@ export function UploadCard({ onAnalyze, loading }: Props) {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
-      if (file.type === 'application/pdf' || 
-          file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-          file.type === 'text/plain') {
+      if (/\.(pdf|docx|txt)$/i.test(file.name) && file.size > 0 && file.size <= 5 * 1024 * 1024) {
         if (resumeFileRef.current) {
           const dt = new DataTransfer();
           dt.items.add(file);
           resumeFileRef.current.files = dt.files;
           setFileName(file.name);
+          setUploadError('');
         }
+      } else {
+        setUploadError('Choose a non-empty PDF, DOCX, or TXT file up to 5 MB.');
       }
     }
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) setFileName(file.name);
+    if (file) {
+      if (!/\.(pdf|docx|txt)$/i.test(file.name) || file.size === 0 || file.size > 5 * 1024 * 1024) {
+        e.target.value = '';
+        setFileName(null);
+        setUploadError('Choose a non-empty PDF, DOCX, or TXT file up to 5 MB.');
+      } else {
+        setFileName(file.name);
+        setUploadError('');
+      }
+    }
   };
   
   async function handleSubmit(e: React.FormEvent) {
@@ -73,7 +84,7 @@ export function UploadCard({ onAnalyze, loading }: Props) {
       try {
         // Dynamic import of PDF.js
         const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
         
         const arrayBuffer = await file.arrayBuffer();
         const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
@@ -92,10 +103,13 @@ export function UploadCard({ onAnalyze, loading }: Props) {
         }
         
         // Send parsed text instead of file
+        if (!fullText.trim()) {
+          setUploadError('No selectable text was found in this PDF. Paste your resume text instead.');
+          return;
+        }
         fd.append('resume_text', fullText);
-        console.log('[UploadCard] Client-side PDF parsed, text length:', fullText.length);
       } catch (err) {
-        console.error('[UploadCard] Client-side PDF parsing failed:', err);
+        console.warn('[UploadCard] Client-side PDF parsing failed; trying server parser');
         // Fall back to sending file
         fd.append('resume', file);
       }
@@ -104,7 +118,7 @@ export function UploadCard({ onAnalyze, loading }: Props) {
       fd.append('resume', file);
     }
     
-    if (resumeText) fd.append('resume_text', resumeText);
+    if (resumeText && !fd.has('resume_text')) fd.append('resume_text', resumeText);
     if (jd && mode === 'full') fd.append('jd', jd);
     onAnalyze(fd);
   }
@@ -283,6 +297,8 @@ export function UploadCard({ onAnalyze, loading }: Props) {
             </div>
           </div>
         </div>
+
+        {uploadError && <p role="alert" className="text-sm text-red-600">{uploadError}</p>}
 
         {/* Submit Button */}
         <div className="flex justify-center pt-4">
