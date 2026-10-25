@@ -3,6 +3,7 @@
 // Focus on mammoth (DOCX) and fallback to user-pasted text
 
 import type { DocHints } from './types';
+import { decodePlainTextResume } from './plainTextResume';
 
 export interface ParseResult {
   text: string;
@@ -70,6 +71,11 @@ function looksLikeResume(text: string): { valid: boolean; reason: string } {
  */
 export async function parseResume(file: File): Promise<ParseResult> {
   const name = file.name || 'resume';
+  const extension = name.toLowerCase().split('.').pop();
+  const supported = ['pdf', 'docx', 'txt'];
+  if (!supported.includes(extension || '') || file.size === 0 || file.size > 5 * 1024 * 1024) {
+    return { text: '', parsingFailed: true };
+  }
   const arrayBuffer = await file.arrayBuffer();
   
   const fileInfo = {
@@ -77,6 +83,13 @@ export async function parseResume(file: File): Promise<ParseResult> {
     fileSize: arrayBuffer.byteLength,
     fileType: name.split('.').pop() || 'unknown'
   };
+
+  if (extension === 'txt') {
+    const text = decodePlainTextResume(arrayBuffer);
+    return text
+      ? { text, hints: extractHints(text, 'plain-text'), fileInfo }
+      : { text: '', parsingFailed: true, fileInfo };
+  }
 
   // Handle DOCX with mammoth (most reliable)
   if (name.toLowerCase().endsWith('.docx')) {
